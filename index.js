@@ -704,6 +704,43 @@ var index_default = {
     if (url.pathname === "/install.sh" && request.method === "GET") {
       return new Response(installSh, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
     }
+    if (url.pathname === "/v1/messages/count_tokens" && request.method === "POST") {
+      const anthropicRequest = await request.json();
+      const openaiRequest = formatAnthropicToOpenAI(anthropicRequest);
+      const bearerToken = request.headers.get("x-api-key");
+      const baseUrl = env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
+      
+      // For token counting, we make a request with max_tokens=0 to get usage info without generation
+      const tokenCountRequest = {
+        ...openaiRequest,
+        max_tokens: 1,
+        stream: false
+      };
+      
+      const openaiResponse = await fetch(`${baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${bearerToken}`
+        },
+        body: JSON.stringify(tokenCountRequest)
+      });
+      
+      if (!openaiResponse.ok) {
+        return new Response(await openaiResponse.text(), { status: openaiResponse.status });
+      }
+      
+      const openaiData = await openaiResponse.json();
+      
+      // Format response for Anthropic count_tokens API
+      const anthropicTokenResponse = {
+        input_tokens: openaiData.usage?.prompt_tokens || 0
+      };
+      
+      return new Response(JSON.stringify(anthropicTokenResponse), {
+        headers: { "Content-Type": "application/json" }
+      });
+    }
     if (url.pathname === "/v1/messages" && request.method === "POST") {
       const anthropicRequest = await request.json();
       const openaiRequest = formatAnthropicToOpenAI(anthropicRequest);
