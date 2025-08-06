@@ -688,6 +688,22 @@ echo "🎉 Installation completed!"
 echo "🔄 Restart terminal or run: source $rc_file"
 echo "🚀 Then run: claude"`;
 
+// Helper function to build headers for OpenRouter requests
+function buildOpenRouterHeaders(bearerToken, env) {
+  const headers = {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${bearerToken}`
+  };
+  
+  // Add HTTP-Referer header for application tracking
+  // Priority: 1) Environment variable 2) Default fallback
+  const appReferer = env.OPENROUTER_APP_REFERER || 'https://xline.askman.dev';
+  headers["HTTP-Referer"] = appReferer;
+  
+  return headers;
+}
+__name(buildOpenRouterHeaders, "buildOpenRouterHeaders");
+
 // index.ts
 var index_default = {
   async fetch(request, env) {
@@ -719,10 +735,7 @@ var index_default = {
       
       const openaiResponse = await fetch(`${baseUrl}/chat/completions`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${bearerToken}`
-        },
+        headers: buildOpenRouterHeaders(bearerToken, env),
         body: JSON.stringify(tokenCountRequest)
       });
       
@@ -748,10 +761,7 @@ var index_default = {
       const baseUrl = env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
       const openaiResponse = await fetch(`${baseUrl}/chat/completions`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${bearerToken}`
-        },
+        headers: buildOpenRouterHeaders(bearerToken, env),
         body: JSON.stringify(openaiRequest)
       });
       if (!openaiResponse.ok) {
