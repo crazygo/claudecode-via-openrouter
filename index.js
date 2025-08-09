@@ -688,6 +688,57 @@ echo "🎉 Installation completed!"
 echo "🔄 Restart terminal or run: source $rc_file"
 echo "🚀 Then run: claude"`;
 
+// Helper function to format OpenAI errors to Anthropic format
+async function formatOpenAIErrorToAnthropic(openaiResponse) {
+  try {
+    // Clone the response so we can read it
+    const responseClone = openaiResponse.clone();
+    const errorText = await responseClone.text();
+    let errorMessage = errorText;
+    
+    // Try to parse as JSON to extract more specific error message
+    try {
+      const errorJson = JSON.parse(errorText);
+      if (errorJson.error?.message) {
+        errorMessage = errorJson.error.message;
+      } else if (errorJson.message) {
+        errorMessage = errorJson.message;
+      }
+    } catch (parseError) {
+      // If parsing fails, use the raw text as the error message
+    }
+    
+    // Format as Anthropic error response
+    const anthropicError = {
+      type: "error",
+      error: {
+        type: "invalid_request_error",
+        message: errorMessage
+      }
+    };
+    
+    return new Response(JSON.stringify(anthropicError), {
+      status: openaiResponse.status,
+      headers: { "Content-Type": "application/json" }
+    });
+  } catch (textError) {
+    // Fallback if we can't read the response text
+    const anthropicError = {
+      type: "error", 
+      error: {
+        type: "invalid_request_error",
+        message: `HTTP ${openaiResponse.status} error`
+      }
+    };
+    
+    return new Response(JSON.stringify(anthropicError), {
+      status: openaiResponse.status,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+}
+__name(formatOpenAIErrorToAnthropic, "formatOpenAIErrorToAnthropic");
+
 // Helper function to build headers for OpenRouter requests
 function buildOpenRouterHeaders(bearerToken, env) {
   const headers = {
@@ -740,7 +791,7 @@ var index_default = {
       });
       
       if (!openaiResponse.ok) {
-        return new Response(await openaiResponse.text(), { status: openaiResponse.status });
+        return await formatOpenAIErrorToAnthropic(openaiResponse);
       }
       
       const openaiData = await openaiResponse.json();
@@ -765,7 +816,7 @@ var index_default = {
         body: JSON.stringify(openaiRequest)
       });
       if (!openaiResponse.ok) {
-        return new Response(await openaiResponse.text(), { status: openaiResponse.status });
+        return await formatOpenAIErrorToAnthropic(openaiResponse);
       }
       if (openaiRequest.stream) {
         const anthropicStream = streamOpenAIToAnthropic(openaiResponse.body, openaiRequest.model);
