@@ -62,6 +62,11 @@ function validateOpenAIToolCalls(messages) {
 __name(validateOpenAIToolCalls, "validateOpenAIToolCalls");
 
 function mapModel(anthropicModel) {
+  // Handle undefined/null model - use default
+  if (!anthropicModel || typeof anthropicModel !== 'string') {
+    return "anthropic/claude-sonnet-4";
+  }
+  
   if (anthropicModel.includes("/")) {
     return anthropicModel;
   }
@@ -77,7 +82,16 @@ function mapModel(anthropicModel) {
 __name(mapModel, "mapModel");
 
 function formatAnthropicToOpenAI(body) {
-  const { model, messages, system = [], temperature, tools, stream } = body;
+  // Provide defaults for required fields
+  const { 
+    model = "anthropic/claude-sonnet-4", 
+    messages = [], 
+    system = [], 
+    temperature, 
+    tools, 
+    stream 
+  } = body || {};
+  
   const openAIMessages = Array.isArray(messages) ? messages.flatMap((anthropicMessage) => {
     const openAiMessagesFromThisAnthropicMessage = [];
     if (!Array.isArray(anthropicMessage.content)) {
@@ -707,84 +721,182 @@ __name(buildOpenRouterHeaders, "buildOpenRouterHeaders");
 // index.ts
 var index_default = {
   async fetch(request, env) {
-    const url = new URL(request.url);
-    if (url.pathname === "/" && request.method === "GET") {
-      return new Response(indexHtml, { headers: { "Content-Type": "text/html" } });
-    }
-    if (url.pathname === "/terms" && request.method === "GET") {
-      return new Response(termsHtml, { headers: { "Content-Type": "text/html" } });
-    }
-    if (url.pathname === "/privacy" && request.method === "GET") {
-      return new Response(privacyHtml, { headers: { "Content-Type": "text/html" } });
-    }
-    if (url.pathname === "/install.sh" && request.method === "GET") {
-      return new Response(installSh, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
-    }
-    if (url.pathname === "/v1/messages/count_tokens" && request.method === "POST") {
-      const anthropicRequest = await request.json();
-      const openaiRequest = formatAnthropicToOpenAI(anthropicRequest);
-      const bearerToken = request.headers.get("x-api-key");
-      const baseUrl = env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
-      
-      // For token counting, we make a request with max_tokens=0 to get usage info without generation
-      const tokenCountRequest = {
-        ...openaiRequest,
-        max_tokens: 1,
-        stream: false
-      };
-      
-      const openaiResponse = await fetch(`${baseUrl}/chat/completions`, {
-        method: "POST",
-        headers: buildOpenRouterHeaders(bearerToken, env),
-        body: JSON.stringify(tokenCountRequest)
-      });
-      
-      if (!openaiResponse.ok) {
-        return new Response(await openaiResponse.text(), { status: openaiResponse.status });
+    try {
+      const url = new URL(request.url);
+      if (url.pathname === "/" && request.method === "GET") {
+        return new Response(indexHtml, { headers: { "Content-Type": "text/html" } });
       }
-      
-      const openaiData = await openaiResponse.json();
-      
-      // Format response for Anthropic count_tokens API
-      const anthropicTokenResponse = {
-        input_tokens: openaiData.usage?.prompt_tokens || 0
-      };
-      
-      return new Response(JSON.stringify(anthropicTokenResponse), {
-        headers: { "Content-Type": "application/json" }
-      });
-    }
-    if (url.pathname === "/v1/messages" && request.method === "POST") {
-      const anthropicRequest = await request.json();
-      const openaiRequest = formatAnthropicToOpenAI(anthropicRequest);
-      const bearerToken = request.headers.get("x-api-key");
-      const baseUrl = env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
-      const openaiResponse = await fetch(`${baseUrl}/chat/completions`, {
-        method: "POST",
-        headers: buildOpenRouterHeaders(bearerToken, env),
-        body: JSON.stringify(openaiRequest)
-      });
-      if (!openaiResponse.ok) {
-        return new Response(await openaiResponse.text(), { status: openaiResponse.status });
+      if (url.pathname === "/terms" && request.method === "GET") {
+        return new Response(termsHtml, { headers: { "Content-Type": "text/html" } });
       }
-      if (openaiRequest.stream) {
-        const anthropicStream = streamOpenAIToAnthropic(openaiResponse.body, openaiRequest.model);
-        return new Response(anthropicStream, {
-          headers: {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive"
+      if (url.pathname === "/privacy" && request.method === "GET") {
+        return new Response(privacyHtml, { headers: { "Content-Type": "text/html" } });
+      }
+      if (url.pathname === "/install.sh" && request.method === "GET") {
+        return new Response(installSh, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
+      }
+      if (url.pathname === "/v1/messages/count_tokens" && request.method === "POST") {
+        try {
+          const anthropicRequest = await request.json();
+          const openaiRequest = formatAnthropicToOpenAI(anthropicRequest);
+          const bearerToken = request.headers.get("x-api-key");
+          
+          if (!bearerToken) {
+            return new Response(JSON.stringify({ error: "Missing x-api-key header" }), { 
+              status: 401, 
+              headers: { "Content-Type": "application/json" } 
+            });
           }
-        });
-      } else {
-        const openaiData = await openaiResponse.json();
-        const anthropicResponse = formatOpenAIToAnthropic(openaiData, openaiRequest.model);
-        return new Response(JSON.stringify(anthropicResponse), {
-          headers: { "Content-Type": "application/json" }
-        });
+          
+          const baseUrl = env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
+          
+          // For token counting, we make a request with max_tokens=0 to get usage info without generation
+          const tokenCountRequest = {
+            ...openaiRequest,
+            max_tokens: 1,
+            stream: false
+          };
+          
+          let openaiResponse;
+          try {
+            openaiResponse = await fetch(`${baseUrl}/chat/completions`, {
+              method: "POST",
+              headers: buildOpenRouterHeaders(bearerToken, env),
+              body: JSON.stringify(tokenCountRequest)
+            });
+          } catch (networkError) {
+            return new Response(JSON.stringify({ error: "Network error connecting to API provider" }), { 
+              status: 503, 
+              headers: { "Content-Type": "application/json" } 
+            });
+          }
+          
+          if (!openaiResponse.ok) {
+            try {
+              const errorText = await openaiResponse.text();
+              return new Response(errorText, { status: openaiResponse.status });
+            } catch (readError) {
+              return new Response(JSON.stringify({ error: "Error reading API response" }), { 
+                status: openaiResponse.status,
+                headers: { "Content-Type": "application/json" } 
+              });
+            }
+          }
+          
+          let openaiData;
+          try {
+            openaiData = await openaiResponse.json();
+          } catch (parseError) {
+            return new Response(JSON.stringify({ error: "Invalid JSON response from API provider" }), { 
+              status: 502, 
+              headers: { "Content-Type": "application/json" } 
+            });
+          }
+          
+          // Format response for Anthropic count_tokens API
+          const anthropicTokenResponse = {
+            input_tokens: openaiData.usage?.prompt_tokens || 0
+          };
+          
+          return new Response(JSON.stringify(anthropicTokenResponse), {
+            headers: { "Content-Type": "application/json" }
+          });
+        } catch (error) {
+          if (error instanceof SyntaxError) {
+            return new Response(JSON.stringify({ error: "Invalid JSON in request body" }), { 
+              status: 400, 
+              headers: { "Content-Type": "application/json" } 
+            });
+          }
+          return new Response(JSON.stringify({ error: "Internal server error" }), { 
+            status: 500, 
+            headers: { "Content-Type": "application/json" } 
+          });
+        }
       }
+      if (url.pathname === "/v1/messages" && request.method === "POST") {
+        try {
+          const anthropicRequest = await request.json();
+          const openaiRequest = formatAnthropicToOpenAI(anthropicRequest);
+          const bearerToken = request.headers.get("x-api-key");
+          
+          if (!bearerToken) {
+            return new Response(JSON.stringify({ error: "Missing x-api-key header" }), { 
+              status: 401, 
+              headers: { "Content-Type": "application/json" } 
+            });
+          }
+          
+          const baseUrl = env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
+          let openaiResponse;
+          try {
+            openaiResponse = await fetch(`${baseUrl}/chat/completions`, {
+              method: "POST",
+              headers: buildOpenRouterHeaders(bearerToken, env),
+              body: JSON.stringify(openaiRequest)
+            });
+          } catch (networkError) {
+            return new Response(JSON.stringify({ error: "Network error connecting to API provider" }), { 
+              status: 503, 
+              headers: { "Content-Type": "application/json" } 
+            });
+          }
+          if (!openaiResponse.ok) {
+            try {
+              const errorText = await openaiResponse.text();
+              return new Response(errorText, { status: openaiResponse.status });
+            } catch (readError) {
+              return new Response(JSON.stringify({ error: "Error reading API response" }), { 
+                status: openaiResponse.status,
+                headers: { "Content-Type": "application/json" } 
+              });
+            }
+          }
+          if (openaiRequest.stream) {
+            const anthropicStream = streamOpenAIToAnthropic(openaiResponse.body, openaiRequest.model);
+            return new Response(anthropicStream, {
+              headers: {
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive"
+              }
+            });
+          } else {
+            let openaiData;
+            try {
+              openaiData = await openaiResponse.json();
+            } catch (parseError) {
+              return new Response(JSON.stringify({ error: "Invalid JSON response from API provider" }), { 
+                status: 502, 
+                headers: { "Content-Type": "application/json" } 
+              });
+            }
+            const anthropicResponse = formatOpenAIToAnthropic(openaiData, openaiRequest.model);
+            return new Response(JSON.stringify(anthropicResponse), {
+              headers: { "Content-Type": "application/json" }
+            });
+          }
+        } catch (error) {
+          if (error instanceof SyntaxError) {
+            return new Response(JSON.stringify({ error: "Invalid JSON in request body" }), { 
+              status: 400, 
+              headers: { "Content-Type": "application/json" } 
+            });
+          }
+          return new Response(JSON.stringify({ error: "Internal server error" }), { 
+            status: 500, 
+            headers: { "Content-Type": "application/json" } 
+          });
+        }
+      }
+      return new Response("Not Found", { status: 404 });
+    } catch (error) {
+      // Catch any other unexpected errors
+      return new Response(JSON.stringify({ error: "Internal server error" }), { 
+        status: 500, 
+        headers: { "Content-Type": "application/json" } 
+      });
     }
-    return new Response("Not Found", { status: 404 });
   }
 };
 export { index_default as default };
